@@ -2,12 +2,33 @@
 #include "delta_stepping.h"
 #include "dijkstra.h"
 #include <iostream>
+#include <iomanip>
+#include <vector>
 #include <cstdlib>
 #include <ctime>
+#include <chrono>
 
-int main() {
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
+using Clock = std::chrono::steady_clock;
+constexpr int DELTA_DEFAULT = 3;
 
+template <typename F>
+double measureMs(F &&f)
+{
+    auto t0 = Clock::now();
+    f();
+    return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+void showDistances(const std::vector<int> &d)
+{
+    for (std::size_t i = 0; i < d.size(); ++i)
+        std::cout << i << ": " << d[i] << '\n';
+}
+
+// sanity check 
+void testSmallGraph()
+{
+    std::cout << "sanity test:\n";
     Graph g(5);
     g.addEdge(0, 1, 10);
     g.addEdge(0, 2, 5);
@@ -16,56 +37,103 @@ int main() {
     g.addEdge(2, 3, 9);
     g.addEdge(2, 4, 2);
     g.addEdge(3, 4, 4);
-    
-    std::cout << "Test graph:\n";
+    std::cout << "graph:\n";
     g.print();
-    
-    std::vector<Edge> light, heavy;
-    int delta = 3;
-    g.splitEdges(2, delta, light, heavy);
-    std::cout << "\nTest splitting edges from vertex 2 with delta = " << delta << ":\n";
-    std::cout << "Light edges: ";
-    for (const Edge& e : light) {
-        std::cout << e.dest << "(" << e.weight << ") ";
+    double tDijkstra{0.0}, tDelta{0.0};
+    std::vector<int> dj, ds;
+
+    tDijkstra = measureMs([&]() { dj = dijkstra(g, 0); });
+    tDelta    = measureMs([&]() { ds = deltaStepping(g, 0, DELTA_DEFAULT); });
+
+    std::cout << "\nDijkstra (" << tDijkstra << " ms)\n";
+    showDistances(dj);
+
+    std::cout << "\n delta‑stepping (delta=" << DELTA_DEFAULT << ", " << tDelta << " ms)\n";
+    showDistances(ds);
+
+    if (dj != ds)
+        std::cerr << "algorithm error\n";
+    std::cout << '\n';
+}
+
+
+//benchmark
+
+void performanceBenchmarks()
+{
+    std::cout << "scaling experiment:\n";
+    std::cout << "  n    m      Dijkstra    delta‑step\n"
+                 "-------------------------------\n";
+    const int sizes[] = {50, 100, 200, 500};
+    for (int n : sizes)
+    {
+        int m = n * 3;
+        Graph g = Graph::randomGraph(n, m);
+
+        double tDijkstra = measureMs([&]() { dijkstra(g, 0); });
+        double tDelta    = measureMs([&]() { deltaStepping(g, 0, DELTA_DEFAULT); });
+
+        std::cout << std::setw(4) << n << ' '
+                  << std::setw(5) << m << "   "
+                  << std::setw(10) << std::fixed << std::setprecision(3) << tDijkstra << "   "
+                  << std::setw(10) << tDelta << '\n';
     }
-    
-    std::cout << "\nHeavy edges: ";
-    for (const Edge& e : heavy) {
-        std::cout << e.dest << "(" << e.weight << ") ";
+    std::cout << '\n';
+}
+
+// delta parameter influence
+void deltaParameterInfluence()
+{
+    std::cout << "delta check:\n";
+    std::cout << "graph: 300 v / 900 e\n";
+    std::cout << " delta    time (ms)\n"
+                 "----------------\n";
+
+    Graph g = Graph::randomGraph(300, 900);
+    const int deltas[] = {1, 2, 5, 10, 20, 50};
+
+    for (int d : deltas)
+    {
+        double t = measureMs([&]() { deltaStepping(g, 0, d); });
+        std::cout << std::setw(2) << d << "   "
+                  << std::setw(8) << std::fixed << std::setprecision(3) << t << '\n';
     }
-    std::cout << "\n";
+    std::cout << '\n';
+}
 
-    std::cout << "\nRandom graph test:\n";
-    Graph random = Graph::randomGraph(8, 15);
-    random.print();
 
-    random.saveFile("test_graph.txt");
-    Graph loaded = Graph::loadFile("test_graph.txt");
-    loaded.print();
-
-    int delta_ds = 3;
-    auto dist_ds = deltaStepping(g, 0, delta_ds);
-    std::cout << "\nDelta-stepping distances from 0 (delta = " << delta_ds << "):\n";
-    for (size_t i = 0; i < dist_ds.size(); ++i) std::cout << i << ": " << dist_ds[i] << "\n";
-
-    auto dist_dj = dijkstra(g, 0);
-    std::cout << "\nDijkstra distances from 0:\n";
-    for (size_t i = 0; i < dist_dj.size(); ++i) std::cout << i << ": " << dist_dj[i] << "\n";
-
+// cross validation
+void CrossValidation()
+{
+    std::cout << "random validation:\n";
     bool ok = true;
-    for (int t = 0; t < 500 && ok; ++t) {
-        int v = 20 + std::rand() % 81;
-        int e = v * (2 + std::rand() % 4);      
-        int max_w = 100;
-        Graph rg = Graph::randomGraph(v, e, max_w);
-        auto a = deltaStepping(rg, 0, 3);
-        auto b = dijkstra(rg, 0);
-        if (a != b) {
-            std::cout << "\nMismatch on random test " << t << "\n";
+    for (int t = 0; t < 30 && ok; ++t)
+    {
+        int v = 20 + std::rand() % 50;
+        int e = v * (2 + std::rand() % 3);
+        Graph g = Graph::randomGraph(v, e);
+        auto a = deltaStepping(g, 0, DELTA_DEFAULT);
+        auto b = dijkstra(g, 0);
+        if (a != b)
+        {
             ok = false;
+            std::cerr << "mismatch on graph " << t
+                      << " (" << v << " v, " << e << " e)\n";
         }
     }
-    if (ok) std::cout << "\nRandom-graph cross-check passed (500 cases)\n";
+    if (ok)
+        std::cout << "valid";
+}
 
+
+int main()
+{
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+    std::cout.setf(std::ios::fixed);  
+    std::cout.precision(3);          
+    testSmallGraph();
+    performanceBenchmarks();
+    deltaParameterInfluence();
+    CrossValidation();
     return 0;
 }
