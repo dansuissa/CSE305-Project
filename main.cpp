@@ -1,12 +1,14 @@
 #include "graph.h"
 #include "delta_stepping.h"
 #include "dijkstra.h"
+#include "parallel_delta_stepping.h"
 #include <iostream>
 #include <iomanip>
 #include <vector>
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
+#include <thread>
 
 using Clock = std::chrono::steady_clock;
 constexpr int DELTA_DEFAULT = 3;
@@ -39,11 +41,14 @@ void testSmallGraph()
     g.addEdge(3, 4, 4);
     std::cout << "graph:\n";
     g.print();
-    double tDijkstra{0.0}, tDelta{0.0};
-    std::vector<int> dj, ds;
+    double tDijkstra{0.0}, tDelta{0.0}, tPar{0.0};
+    std::vector<int> dj, ds, par;
+    int threads = std::thread::hardware_concurrency();
+    if (threads == 0) threads = 1;
 
     tDijkstra = measureMs([&]() { dj = dijkstra(g, 0); });
     tDelta    = measureMs([&]() { ds = deltaStepping(g, 0, DELTA_DEFAULT); });
+    tPar      = measureMs([&]() { par = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
 
     std::cout << "\nDijkstra (" << tDijkstra << " ms)\n";
     showDistances(dj);
@@ -51,7 +56,10 @@ void testSmallGraph()
     std::cout << "\n delta‑stepping (delta=" << DELTA_DEFAULT << ", " << tDelta << " ms)\n";
     showDistances(ds);
 
-    if (dj != ds)
+    std::cout << "\nparallel delta‑stepping (" << tPar << " ms)\n";
+    showDistances(par);
+
+    if (dj != ds || dj != par)
         std::cerr << "algorithm error\n";
     std::cout << '\n';
 }
@@ -62,9 +70,11 @@ void testSmallGraph()
 void performanceBenchmarks()
 {
     std::cout << "scaling experiment:\n";
-    std::cout << "  n    m      Dijkstra    delta‑step\n"
-                 "-------------------------------\n";
+    std::cout << "  n    m      Dijkstra    delta‑step    parallel\n"
+                 "---------------------------------------------\n";
     const int sizes[] = {50, 100, 200, 500};
+    int threads = std::thread::hardware_concurrency();
+    if (threads == 0) threads = 1;
     for (int n : sizes)
     {
         int m = n * 3;
@@ -72,11 +82,13 @@ void performanceBenchmarks()
 
         double tDijkstra = measureMs([&]() { dijkstra(g, 0); });
         double tDelta    = measureMs([&]() { deltaStepping(g, 0, DELTA_DEFAULT); });
+        double tPar      = measureMs([&]() { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
 
         std::cout << std::setw(4) << n << ' '
                   << std::setw(5) << m << "   "
                   << std::setw(10) << std::fixed << std::setprecision(3) << tDijkstra << "   "
-                  << std::setw(10) << tDelta << '\n';
+                  << std::setw(10) << tDelta << "   "
+                  << std::setw(10) << tPar << '\n';
     }
     std::cout << '\n';
 }
@@ -107,6 +119,8 @@ void CrossValidation()
 {
     std::cout << "random validation:\n";
     bool ok = true;
+    int threads = std::thread::hardware_concurrency();
+    if (threads == 0) threads = 1;
     for (int t = 0; t < 30 && ok; ++t)
     {
         int v = 20 + std::rand() % 50;
@@ -114,7 +128,8 @@ void CrossValidation()
         Graph g = Graph::randomGraph(v, e);
         auto a = deltaStepping(g, 0, DELTA_DEFAULT);
         auto b = dijkstra(g, 0);
-        if (a != b)
+        auto c = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads);
+        if (a != b || a != c)
         {
             ok = false;
             std::cerr << "mismatch on graph " << t
@@ -123,14 +138,15 @@ void CrossValidation()
     }
     if (ok)
         std::cout << "valid";
+    std::cout << '\n';
 }
 
 
 int main()
 {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
-    std::cout.setf(std::ios::fixed);  
-    std::cout.precision(3);          
+    std::cout.setf(std::ios::fixed);
+    std::cout.precision(3);
     testSmallGraph();
     performanceBenchmarks();
     deltaParameterInfluence();
