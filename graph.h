@@ -13,7 +13,6 @@ struct Edge {
     Edge(int dest, int w);
 };
 
-// Graph using adjacency list
 class Graph {
 private:
     int n; 
@@ -35,10 +34,11 @@ public:
     
     void saveFile(const std::string& filename) const;
     
-    // Generate random graph
     static Graph randomGraph(int vertices, int edges, int maxWeight = 100);
     
     void print() const;
 };
 
 #endif
+
+

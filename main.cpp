@@ -2,6 +2,7 @@
 #include "delta_stepping.h"
 #include "dijkstra.h"
 #include "parallel_delta_stepping.h"
+#include "parallel_delta_stepping_v2.h"
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -48,7 +49,8 @@ void testSmallGraph()
 
     tDijkstra = measureMs([&]() { dj = dijkstra(g, 0); });
     tDelta    = measureMs([&]() { ds = deltaStepping(g, 0, DELTA_DEFAULT); });
-    tPar      = measureMs([&]() { par = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
+    // tPar      = measureMs([&]() { par = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
+    tPar      = measureMs([&]() { par = parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
 
     std::cout << "\nDijkstra (" << tDijkstra << " ms)\n";
     showDistances(dj);
@@ -82,33 +84,14 @@ void performanceBenchmarks()
 
         double tDijkstra = measureMs([&]() { dijkstra(g, 0); });
         double tDelta    = measureMs([&]() { deltaStepping(g, 0, DELTA_DEFAULT); });
-        double tPar      = measureMs([&]() { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
+        // double tPar      = measureMs([&]() { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
+        double tPar      = measureMs([&]() { parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
 
         std::cout << std::setw(4) << n << ' '
                   << std::setw(5) << m << "   "
                   << std::setw(10) << std::fixed << std::setprecision(3) << tDijkstra << "   "
                   << std::setw(10) << tDelta << "   "
                   << std::setw(10) << tPar << '\n';
-    }
-    std::cout << '\n';
-}
-
-// delta parameter influence
-void deltaParameterInfluence()
-{
-    std::cout << "delta check:\n";
-    std::cout << "graph: 300 v / 900 e\n";
-    std::cout << " delta    time (ms)\n"
-                 "----------------\n";
-
-    Graph g = Graph::randomGraph(300, 900);
-    const int deltas[] = {1, 2, 5, 10, 20, 50};
-
-    for (int d : deltas)
-    {
-        double t = measureMs([&]() { deltaStepping(g, 0, d); });
-        std::cout << std::setw(2) << d << "   "
-                  << std::setw(8) << std::fixed << std::setprecision(3) << t << '\n';
     }
     std::cout << '\n';
 }
@@ -128,7 +111,8 @@ void CrossValidation()
         Graph g = Graph::randomGraph(v, e);
         auto a = deltaStepping(g, 0, DELTA_DEFAULT);
         auto b = dijkstra(g, 0);
-        auto c = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads);
+        // auto c = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads);
+        auto c = parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads);
         if (a != b || a != c)
         {
             ok = false;
@@ -137,10 +121,39 @@ void CrossValidation()
         }
     }
     if (ok)
-        std::cout << "valid";
+        std::cout << "the parallel version is valid";
     std::cout << '\n';
 }
 
+void largeGraphBenchmark()
+{
+    std::cout << "Large graph performance test:\n";
+    const int V = 50000;
+    const int E = 5000000;
+    std::cout << "random graph with " << V << " nodes and " << E << " edges...\n";
+
+    Graph g = Graph::randomGraph(V, E);
+
+    int hw = std::thread::hardware_concurrency();
+    int threads = hw ? hw : 1;
+    int optimal_delta = findDelta(g);
+
+    double tSeq = measureMs([&] { deltaStepping(g, 0, DELTA_DEFAULT); });
+    // double tPar = measureMs([&] { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
+    // double tAuto = measureMs([&] { parallelDeltaStepping(g, 0, 0, threads); }); // auto delta
+
+    double tPar = measureMs([&] { parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
+    double tAuto = measureMs([&] { parallelDeltaStepping_v2(g, 0, optimal_delta, threads); }); // auto delta
+
+    std::cout << "Sequential Delta-stepping: " << tSeq << " ms\n";
+    std::cout << "Parallel Delta-stepping (" << threads << " threads, delta="
+              << DELTA_DEFAULT << "): " << tPar << " ms\n";
+    std::cout << "Auto-tuned Parallel Delta-stepping (delta= " << threads << ", threads="
+              << threads << "): " << tAuto << " ms\n";
+
+    std::cout << "Parallel Speedup: " << tSeq / tPar << "x\n";
+    std::cout << "Auto-tuned Speedup: " << tSeq / tAuto << "x\n\n";
+}
 
 int main()
 {
@@ -149,7 +162,7 @@ int main()
     std::cout.precision(3);
     testSmallGraph();
     performanceBenchmarks();
-    deltaParameterInfluence();
     CrossValidation();
+    largeGraphBenchmark();
     return 0;
 }

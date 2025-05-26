@@ -12,20 +12,35 @@ const int INF = std::numeric_limits<int>::max();
 
 using EdgePair = std::pair<int, int>;
 
+/* Finding the optimal delta  was tricky since we didn't follow Meyer's approach exactly. 
+   Used LLM to help figure out a good heuristic for delta selection. */
+
+/* The deque-based management in v1 was suggested by LLM when we looked out for an efficient way to remove nodes from buckets, but turned out to be not optimal.
+   We realized this pretty quickly and redesigned it in v2 with simple vectors instead. */
+
+/* All the core parallelization logic and implementaton is our own work: thread management, synchronization strategy and so on */
+
 static int findDelta(const Graph& g) {
-    int min_w = INF, max_w = 0, edges = 0;
-    for (int u = 0; u < g.size(); ++u) {
+    int n = g.size();
+    int min_w = INF, max_w = 0;
+    for (int u = 0; u < n; u++) {
         for (const Edge& e : g.getEdges(u)) {
-            ++edges;
-            if (e.weight > 0 && e.weight < min_w) min_w = e.weight;
-            if (e.weight > max_w) max_w = e.weight;
+            if (e.weight > 0 && e.weight < min_w) 
+                min_w = e.weight;
+            if (e.weight > max_w) 
+                max_w = e.weight;
         }
     }
+    
     if (min_w == INF) return 1;
-    double dens = static_cast<double>(edges) / (g.size() * g.size());
-    int delta = min_w;
-    if (dens > 0.1 || max_w / min_w > 1000) delta = static_cast<int>(std::sqrt(1.0 * min_w * max_w));
-    return std::max(1, delta);
+    if (n < 100) return min_w;
+    int total_edges = 0;
+    for (int u = 0; u < n; u++) {
+        total_edges += g.getEdges(u).size();
+    }
+    int avg_degree = (total_edges + n - 1) / n;
+    int delta = std::max(1, min_w * std::min(10, avg_degree));
+    return std::min(delta, max_w / 10);
 }
 
 static int optimalNumberOfThreads(const Graph& g, int hw_threads) {
@@ -81,7 +96,7 @@ static void do_relaxations(const std::vector<EdgePair>& req, int L, int R, std::
 static void findRequests(std::vector<EdgePair>& out, const std::vector<int>& nodes, bool lightEdges, const Graph& g, const std::vector<std::atomic<int>>& dist, int delta) {
     out.clear();
     for (int v : nodes) {
-        for (const Edge& e : g.getEdges(v)) {
+        for (const Edge& e : g.getEdges(v)) { 
             if ((lightEdges && e.weight <= delta) || (!lightEdges && e.weight > delta)) {
                 int w = e.dest; int new_d = dist[v].load() + e.weight;
                 if (new_d < dist[w].load()) out.emplace_back(w, new_d);
