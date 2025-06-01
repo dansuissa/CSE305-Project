@@ -13,10 +13,7 @@ const int INF = std::numeric_limits<int>::max();
 using EdgePair = std::pair<int, int>;
 
 /* Finding the optimal delta  was tricky since we didn't follow Meyer's approach exactly. 
-   Used LLM to help figure out a good heuristic for delta selection. */
-
-/* The deque-based management in v1 was suggested by LLM when we looked out for an efficient way to remove nodes from buckets, but turned out to be not optimal.
-   We realized this pretty quickly and redesigned it in v2 with simple vectors instead. */
+   Used LLM to help figure out a good value for delta selection. */
 
 /* All the core parallelization logic and implementaton is our own work: thread management, synchronization strategy and so on */
 

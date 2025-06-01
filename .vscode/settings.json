@@ -24,6 +24,7 @@
         "typeinfo": "cpp",
         "vector": "cpp",
         "memory": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "iostream": "cpp"
     }
 }

@@ -10,159 +10,455 @@
 #include <ctime>
 #include <chrono>
 #include <thread>
+#include <fstream>
+#include <cmath>
 
-using Clock = std::chrono::steady_clock;
-constexpr int DELTA_DEFAULT = 3;
+const int DEFAULT_DELTA = 3;
+const int MEASUREMENT_TRIALS = 5;
 
-template <typename F>
-double measureMs(F &&f)
-{
-    auto t0 = Clock::now();
-    f();
-    return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+double measureMs(std::function<void()> func) {
+    auto start = std::chrono::steady_clock::now();
+    func();
+    auto end = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
-void showDistances(const std::vector<int> &d)
-{
-    for (std::size_t i = 0; i < d.size(); ++i)
-        std::cout << i << ": " << d[i] << '\n';
-}
-
-// sanity check 
-void testSmallGraph()
-{
-    std::cout << "sanity test:\n";
-    Graph g(5);
-    g.addEdge(0, 1, 10);
-    g.addEdge(0, 2, 5);
-    g.addEdge(1, 2, 2);
-    g.addEdge(1, 3, 1);
-    g.addEdge(2, 3, 9);
-    g.addEdge(2, 4, 2);
-    g.addEdge(3, 4, 4);
-    std::cout << "graph:\n";
-    g.print();
-    double tDijkstra{0.0}, tDelta{0.0}, tPar{0.0};
-    std::vector<int> dj, ds, par;
-    int threads = std::thread::hardware_concurrency();
-    if (threads == 0) threads = 1;
-
-    tDijkstra = measureMs([&]() { dj = dijkstra(g, 0); });
-    tDelta    = measureMs([&]() { ds = deltaStepping(g, 0, DELTA_DEFAULT); });
-    // tPar      = measureMs([&]() { par = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
-    tPar      = measureMs([&]() { par = parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
-
-    std::cout << "\nDijkstra (" << tDijkstra << " ms)\n";
-    showDistances(dj);
-
-    std::cout << "\n delta‑stepping (delta=" << DELTA_DEFAULT << ", " << tDelta << " ms)\n";
-    showDistances(ds);
-
-    std::cout << "\nparallel delta‑stepping (" << tPar << " ms)\n";
-    showDistances(par);
-
-    if (dj != ds || dj != par)
-        std::cerr << "algorithm error\n";
-    std::cout << '\n';
-}
-
-
-//benchmark
-
-void performanceBenchmarks()
-{
-    std::cout << "scaling experiment:\n";
-    std::cout << "  n    m      Dijkstra    delta‑step    parallel\n"
-                 "---------------------------------------------\n";
-    const int sizes[] = {50, 100, 200, 500};
-    int threads = std::thread::hardware_concurrency();
-    if (threads == 0) threads = 1;
-    for (int n : sizes)
-    {
-        int m = n * 3;
-        Graph g = Graph::randomGraph(n, m);
-
-        double tDijkstra = measureMs([&]() { dijkstra(g, 0); });
-        double tDelta    = measureMs([&]() { deltaStepping(g, 0, DELTA_DEFAULT); });
-        // double tPar      = measureMs([&]() { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
-        double tPar      = measureMs([&]() { parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
-
-        std::cout << std::setw(4) << n << ' '
-                  << std::setw(5) << m << "   "
-                  << std::setw(10) << std::fixed << std::setprecision(3) << tDijkstra << "   "
-                  << std::setw(10) << tDelta << "   "
-                  << std::setw(10) << tPar << '\n';
+double getAverageTime(std::function<void()> func, int trials = MEASUREMENT_TRIALS) {
+    double totalTime = 0.0;
+    for (int i = 0; i < trials; i++) {
+        totalTime += measureMs(func);
     }
-    std::cout << '\n';
+    return totalTime / trials;
 }
 
+void writeResultsToFile(const std::string& filename, const std::vector<std::vector<std::string>>& data) {
+    std::ofstream file(filename);
+    for (const auto& row : data) {
+        for (size_t i = 0; i < row.size(); i++) {
+            file << row[i];
+            if (i < row.size() - 1) file << ",";
+        }
+        file << "\n";
+    }
+    file.close();
+}
 
-// cross validation
-void CrossValidation()
-{
-    std::cout << "random validation:\n";
-    bool ok = true;
-    int threads = std::thread::hardware_concurrency();
-    if (threads == 0) threads = 1;
-    for (int t = 0; t < 30 && ok; ++t)
-    {
-        int v = 20 + std::rand() % 50;
-        int e = v * (2 + std::rand() % 3);
-        Graph g = Graph::randomGraph(v, e);
-        auto a = deltaStepping(g, 0, DELTA_DEFAULT);
-        auto b = dijkstra(g, 0);
-        // auto c = parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads);
-        auto c = parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads);
-        if (a != b || a != c)
-        {
-            ok = false;
-            std::cerr << "mismatch on graph " << t
-                      << " (" << v << " v, " << e << " e)\n";
+bool runCorrectnessTests() {
+    std::cout << "Running correctness tests...\n";
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (int test = 0; test < 20; test++) {
+        int nodes = 50 + rand() % 100;
+        int edges = nodes * (2 + rand() % 4);
+        Graph testGraph = Graph::randomGraph(nodes, edges, 100);
+        
+        auto dijkstraResult = dijkstra(testGraph, 0);
+        auto deltaResult = deltaStepping(testGraph, 0, DEFAULT_DELTA);
+        auto parallelV1Result = parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threadCount);
+        auto parallelV2Result = parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threadCount);
+        
+        if (dijkstraResult != deltaResult || dijkstraResult != parallelV1Result || dijkstraResult != parallelV2Result) {
+            std::cout << "Test " << test << " failed - results don't match\n";
+            return false;
         }
     }
-    if (ok)
-        std::cout << "the parallel version is valid";
-    std::cout << '\n';
+    
+    std::cout << "All correctness tests passed\n\n";
+    return true;
 }
 
-void largeGraphBenchmark()
-{
-    std::cout << "Large graph performance test:\n";
-    const int V = 50000;
-    const int E = 5000000;
-    std::cout << "random graph with " << V << " nodes and " << E << " edges...\n";
-
-    Graph g = Graph::randomGraph(V, E);
-
-    int hw = std::thread::hardware_concurrency();
-    int threads = hw ? hw : 1;
-    int optimal_delta = findDelta(g);
-
-    double tSeq = measureMs([&] { deltaStepping(g, 0, DELTA_DEFAULT); });
-    // double tPar = measureMs([&] { parallelDeltaStepping(g, 0, DELTA_DEFAULT, threads); });
-    // double tAuto = measureMs([&] { parallelDeltaStepping(g, 0, 0, threads); }); // auto delta
-
-    double tPar = measureMs([&] { parallelDeltaStepping_v2(g, 0, DELTA_DEFAULT, threads); });
-    double tAuto = measureMs([&] { parallelDeltaStepping_v2(g, 0, optimal_delta, threads); }); // auto delta
-
-    std::cout << "Sequential Delta-stepping: " << tSeq << " ms\n";
-    std::cout << "Parallel Delta-stepping (" << threads << " threads, delta="
-              << DELTA_DEFAULT << "): " << tPar << " ms\n";
-    std::cout << "Auto-tuned Parallel Delta-stepping (delta= " << threads << ", threads="
-              << threads << "): " << tAuto << " ms\n";
-
-    std::cout << "Parallel Speedup: " << tSeq / tPar << "x\n";
-    std::cout << "Auto-tuned Speedup: " << tSeq / tAuto << "x\n\n";
+void analyzeGraphTypes() {
+    std::cout << "Analyzing different graph types...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"graph_type", "size", "edges", "dijkstra_time", "delta_time", "parallel_v1_time", "parallel_v2_time", "seq_speedup", "par_v1_speedup", "par_v2_speedup"});
+    
+    std::vector<int> testSizes = {100, 200, 500, 1000, 2000, 3000, 5000};
+    std::vector<std::string> graphTypes = {"random", "grid", "scale_free", "small_world"};
+    
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (const std::string& type : graphTypes) {
+        std::cout << "Testing " << type << " graphs...\n";
+        
+        for (int n : testSizes) {
+            Graph testGraph(1);
+            int actualEdges = 0;
+            
+            if (type == "random") {
+                int edgeCount = n * 3;
+                testGraph = Graph::randomGraph(n, edgeCount, 100);
+                actualEdges = edgeCount;
+            } else if (type == "grid") {
+                int side = (int)sqrt(n);
+                testGraph = Graph::gridGraph(side, side, 50);
+                actualEdges = 2 * (side - 1) * side;
+            } else if (type == "scale_free") {
+                testGraph = Graph::scaleFreeGraph(n, 3, 100);
+                for (int i = 0; i < n; i++) {
+                    actualEdges += testGraph.getEdges(i).size();
+                }
+            } else if (type == "small_world") {
+                testGraph = Graph::smallWorldGraph(n, 6, 0.3, 50);
+                for (int i = 0; i < n; i++) {
+                    actualEdges += testGraph.getEdges(i).size();
+                }
+            }
+            
+            if (testGraph.size() < 50) continue;
+            
+            double dijkstraTime = getAverageTime([&]() { dijkstra(testGraph, 0); });
+            double deltaTime = getAverageTime([&]() { deltaStepping(testGraph, 0, DEFAULT_DELTA); });
+            double parallelV1Time = getAverageTime([&]() { parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            double parallelV2Time = getAverageTime([&]() { parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            
+            double sequentialSpeedup = dijkstraTime / deltaTime;
+            double parallelV1Speedup = deltaTime / parallelV1Time;
+            double parallelV2Speedup = deltaTime / parallelV2Time;
+            
+            results.push_back({
+                type,
+                std::to_string(testGraph.size()),
+                std::to_string(actualEdges),
+                std::to_string(dijkstraTime),
+                std::to_string(deltaTime),
+                std::to_string(parallelV1Time),
+                std::to_string(parallelV2Time),
+                std::to_string(sequentialSpeedup),
+                std::to_string(parallelV1Speedup),
+                std::to_string(parallelV2Speedup)
+            });
+            
+            std::cout << "  Size " << testGraph.size() << ": v1=" << std::fixed << std::setprecision(2) << parallelV1Speedup 
+                      << "x, v2=" << parallelV2Speedup << "x speedup\n";
+        }
+    }
+    
+    writeResultsToFile("graph_type_analysis.csv", results);
+    std::cout << "Graph type results saved\n\n";
 }
 
-int main()
-{
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
+void analyzeDensityEffects() {
+    std::cout << "Analyzing density effects...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"size", "density", "edges", "dijkstra_time", "delta_time", "parallel_v1_time", "parallel_v2_time", "seq_speedup", "par_v1_speedup", "par_v2_speedup"});
+    
+    std::vector<int> testSizes = {200, 500, 1000, 1500, 2000};
+    std::vector<double> densityLevels = {0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2};
+    
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (int n : testSizes) {
+        std::cout << "Testing size " << n << "...\n";
+        
+        for (double density : densityLevels) {
+            int edgeCount = (int)(density * n * (n - 1) / 2);
+            if (edgeCount < n - 1) edgeCount = n - 1;
+            
+            Graph testGraph = Graph::randomGraph(n, edgeCount, 100);
+            
+            double dijkstraTime = getAverageTime([&]() { dijkstra(testGraph, 0); });
+            double deltaTime = getAverageTime([&]() { deltaStepping(testGraph, 0, DEFAULT_DELTA); });
+            double parallelV1Time = getAverageTime([&]() { parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            double parallelV2Time = getAverageTime([&]() { parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            
+            double sequentialSpeedup = dijkstraTime / deltaTime;
+            double parallelV1Speedup = deltaTime / parallelV1Time;
+            double parallelV2Speedup = deltaTime / parallelV2Time;
+            
+            results.push_back({
+                std::to_string(n),
+                std::to_string(density),
+                std::to_string(edgeCount),
+                std::to_string(dijkstraTime),
+                std::to_string(deltaTime),
+                std::to_string(parallelV1Time),
+                std::to_string(parallelV2Time),
+                std::to_string(sequentialSpeedup),
+                std::to_string(parallelV1Speedup),
+                std::to_string(parallelV2Speedup)
+            });
+            
+            std::cout << "  Density " << std::fixed << std::setprecision(3) << density 
+                      << ": v1=" << std::setprecision(2) << parallelV1Speedup 
+                      << "x, v2=" << parallelV2Speedup << "x speedup\n";
+        }
+    }
+    
+    writeResultsToFile("density_analysis.csv", results);
+    std::cout << "Density analysis results saved\n\n";
+}
+
+void analyzeWeightDistributions() {
+    std::cout << "Analyzing weight distributions...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"distribution", "size", "edges", "dijkstra_time", "delta_time", "parallel_v1_time", "parallel_v2_time", "seq_speedup", "par_v1_speedup", "par_v2_speedup"});
+    
+    std::vector<int> testSizes = {200, 500, 1000, 1500, 2000, 3000};
+    std::vector<std::string> distributions = {"uniform", "exponential", "normal", "bimodal"};
+    
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (const std::string& dist : distributions) {
+        std::cout << "Testing " << dist << " distribution...\n";
+        
+        for (int n : testSizes) {
+            int edgeCount = n * 3;
+            Graph testGraph = Graph::randomGraphWithWeights(n, edgeCount, dist, 100);
+            
+            double dijkstraTime = getAverageTime([&]() { dijkstra(testGraph, 0); });
+            double deltaTime = getAverageTime([&]() { deltaStepping(testGraph, 0, DEFAULT_DELTA); });
+            double parallelV1Time = getAverageTime([&]() { parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            double parallelV2Time = getAverageTime([&]() { parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threadCount); });
+            
+            double sequentialSpeedup = dijkstraTime / deltaTime;
+            double parallelV1Speedup = deltaTime / parallelV1Time;
+            double parallelV2Speedup = deltaTime / parallelV2Time;
+            
+            results.push_back({
+                dist,
+                std::to_string(n),
+                std::to_string(edgeCount),
+                std::to_string(dijkstraTime),
+                std::to_string(deltaTime),
+                std::to_string(parallelV1Time),
+                std::to_string(parallelV2Time),
+                std::to_string(sequentialSpeedup),
+                std::to_string(parallelV1Speedup),
+                std::to_string(parallelV2Speedup)
+            });
+            
+            std::cout << "  Size " << n << ": v1=" << std::fixed << std::setprecision(2) << parallelV1Speedup 
+                      << "x, v2=" << parallelV2Speedup << "x speedup\n";
+        }
+    }
+    
+    writeResultsToFile("weight_distribution_analysis.csv", results);
+    std::cout << "Weight distribution results saved\n\n";
+}
+
+void analyzeDeltaParameter() {
+    std::cout << "Analyzing delta parameter sensitivity...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"graph_type", "size", "delta", "delta_time", "parallel_v1_time", "parallel_v2_time", "v1_speedup", "v2_speedup"});
+    
+    std::vector<int> testSizes = {500, 1000, 2000};
+    std::vector<int> deltaValues = {1, 2, 3, 5, 8, 10, 15, 20, 30, 50};
+    std::vector<std::string> graphTypes = {"random", "grid", "scale_free"};
+    
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (const std::string& type : graphTypes) {
+        std::cout << "Testing " << type << " graphs...\n";
+        
+        for (int n : testSizes) {
+            Graph testGraph(1);
+            if (type == "random") {
+                testGraph = Graph::randomGraph(n, n * 3, 100);
+            } else if (type == "grid") {
+                int side = (int)sqrt(n);
+                testGraph = Graph::gridGraph(side, side, 50);
+            } else if (type == "scale_free") {
+                testGraph = Graph::scaleFreeGraph(n, 3, 100);
+            }
+            
+            for (int delta : deltaValues) {
+                double deltaTime = getAverageTime([&]() { deltaStepping(testGraph, 0, delta); });
+                double parallelV1Time = getAverageTime([&]() { parallelDeltaStepping(testGraph, 0, delta, threadCount); });
+                double parallelV2Time = getAverageTime([&]() { parallelDeltaStepping_v2(testGraph, 0, delta, threadCount); });
+                double v1Speedup = deltaTime / parallelV1Time;
+                double v2Speedup = deltaTime / parallelV2Time;
+                
+                results.push_back({
+                    type,
+                    std::to_string(testGraph.size()),
+                    std::to_string(delta),
+                    std::to_string(deltaTime),
+                    std::to_string(parallelV1Time),
+                    std::to_string(parallelV2Time),
+                    std::to_string(v1Speedup),
+                    std::to_string(v2Speedup)
+                });
+            }
+            
+            std::cout << "  Completed size " << testGraph.size() << "\n";
+        }
+    }
+    
+    writeResultsToFile("delta_parameter_analysis.csv", results);
+    std::cout << "Delta parameter results saved\n\n";
+}
+
+void analyzeRealWorldGraphs() {
+    std::cout << "Analyzing real-world graphs...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"dataset", "vertices", "edges", "dijkstra_time", "delta_time", "parallel_v1_time", "parallel_v2_time", "seq_speedup", "par_v1_speedup", "par_v2_speedup"});
+    
+    std::vector<std::string> graphFiles = {
+        "network_graph/ca-GrQc.txt",
+        "network_graph/ca-HepTh.txt", 
+        "network_graph/ca-AstroPh.txt",
+        "network_graph/ca-CondMat.txt",
+        "network_graph/Slashdot0811.txt"
+    };
+    
+    int threadCount = std::thread::hardware_concurrency();
+    if (threadCount == 0) threadCount = 1;
+    
+    for (const std::string& filename : graphFiles) {
+        try {
+            std::cout << "Processing " << filename << "...\n";
+            Graph testGraph = Graph::loadSNAPGraph(filename);
+            
+            int edgeCount = 0;
+            for (int i = 0; i < testGraph.size(); i++) {
+                edgeCount += testGraph.getEdges(i).size();
+            }
+            edgeCount /= 2;
+            
+            double dijkstraTime = getAverageTime([&]() { dijkstra(testGraph, 0); }, 3);
+            double deltaTime = getAverageTime([&]() { deltaStepping(testGraph, 0, DEFAULT_DELTA); }, 3);
+            double parallelV1Time = getAverageTime([&]() { parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threadCount); }, 3);
+            double parallelV2Time = getAverageTime([&]() { parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threadCount); }, 3);
+            
+            double sequentialSpeedup = dijkstraTime / deltaTime;
+            double parallelV1Speedup = deltaTime / parallelV1Time;
+            double parallelV2Speedup = deltaTime / parallelV2Time;
+            
+            std::string datasetName = filename.substr(filename.find_last_of('/') + 1);
+            
+            results.push_back({
+                datasetName,
+                std::to_string(testGraph.size()),
+                std::to_string(edgeCount),
+                std::to_string(dijkstraTime),
+                std::to_string(deltaTime),
+                std::to_string(parallelV1Time),
+                std::to_string(parallelV2Time),
+                std::to_string(sequentialSpeedup),
+                std::to_string(parallelV1Speedup),
+                std::to_string(parallelV2Speedup)
+            });
+            
+            std::cout << "  " << testGraph.size() << " vertices: v1=" 
+                      << std::fixed << std::setprecision(2) << parallelV1Speedup 
+                      << "x, v2=" << parallelV2Speedup << "x speedup\n";
+            
+        } catch (const std::exception& e) {
+            std::cout << "  Failed to load " << filename << "\n";
+        }
+    }
+    
+    writeResultsToFile("real_world_analysis.csv", results);
+    std::cout << "Real-world graph results saved\n\n";
+}
+
+void analyzeThreadScaling() {
+    std::cout << "Analyzing thread scaling...\n";
+    
+    std::vector<std::vector<std::string>> results;
+    results.push_back({"graph_type", "size", "threads", "delta_time", "parallel_v1_time", "parallel_v2_time", "v1_speedup", "v1_efficiency", "v2_speedup", "v2_efficiency"});
+    
+    int maxThreads = std::thread::hardware_concurrency();
+    if (maxThreads == 0) maxThreads = 4;
+    
+    std::vector<int> threadCounts;
+    for (int t = 1; t <= maxThreads; t *= 2) {
+        threadCounts.push_back(t);
+    }
+    if (threadCounts.back() != maxThreads) {
+        threadCounts.push_back(maxThreads);
+    }
+    
+    std::vector<int> testSizes = {500, 1000, 2000};
+    std::vector<std::string> graphTypes = {"random", "scale_free"};
+    
+    for (const std::string& type : graphTypes) {
+        std::cout << "Testing " << type << " graphs...\n";
+        
+        for (int n : testSizes) {
+            Graph testGraph(1);
+            if (type == "random") {
+                testGraph = Graph::randomGraph(n, n * 4, 100);
+            } else if (type == "scale_free") {
+                testGraph = Graph::scaleFreeGraph(n, 4, 100);
+            }
+            
+            double baselineTime = getAverageTime([&]() { deltaStepping(testGraph, 0, DEFAULT_DELTA); });
+            
+            for (int threads : threadCounts) {
+                double parallelV1Time = getAverageTime([&]() { 
+                    parallelDeltaStepping(testGraph, 0, DEFAULT_DELTA, threads); 
+                });
+                double parallelV2Time = getAverageTime([&]() { 
+                    parallelDeltaStepping_v2(testGraph, 0, DEFAULT_DELTA, threads); 
+                });
+                
+                double v1Speedup = baselineTime / parallelV1Time;
+                double v1Efficiency = v1Speedup / threads;
+                double v2Speedup = baselineTime / parallelV2Time;
+                double v2Efficiency = v2Speedup / threads;
+                
+                results.push_back({
+                    type,
+                    std::to_string(testGraph.size()),
+                    std::to_string(threads),
+                    std::to_string(baselineTime),
+                    std::to_string(parallelV1Time),
+                    std::to_string(parallelV2Time),
+                    std::to_string(v1Speedup),
+                    std::to_string(v1Efficiency),
+                    std::to_string(v2Speedup),
+                    std::to_string(v2Efficiency)
+                });
+                
+                std::cout << "  Size " << testGraph.size() << ", " << threads << " threads: v1=" 
+                          << std::fixed << std::setprecision(2) << v1Speedup 
+                          << "x, v2=" << v2Speedup << "x speedup\n";
+            }
+        }
+    }
+    
+    writeResultsToFile("thread_scaling_analysis.csv", results);
+    std::cout << "Thread scaling results saved\n\n";
+}
+
+int main() {
+    srand(static_cast<unsigned>(time(nullptr)));
     std::cout.setf(std::ios::fixed);
     std::cout.precision(3);
-    testSmallGraph();
-    performanceBenchmarks();
-    CrossValidation();
-    largeGraphBenchmark();
+    
+    std::cout << "Delta-Stepping Algorithm Performance Analysis\n";
+    std::cout << "============================================\n\n";
+    
+    if (!runCorrectnessTests()) {
+        std::cerr << "Correctness tests failed - stopping analysis\n";
+        return 1;
+    }
+    
+    analyzeGraphTypes();
+    analyzeDensityEffects();
+    analyzeWeightDistributions();
+    analyzeDeltaParameter();
+    analyzeThreadScaling();
+    analyzeRealWorldGraphs();
+    
+    std::cout << "Analysis complete! Generated files:\n";
+    std::cout << "- graph_type_analysis.csv\n";
+    std::cout << "- density_analysis.csv\n";
+    std::cout << "- weight_distribution_analysis.csv\n";
+    std::cout << "- delta_parameter_analysis.csv\n";
+    std::cout << "- thread_scaling_analysis.csv\n";
+    std::cout << "- real_world_analysis.csv\n";
+    
     return 0;
 }

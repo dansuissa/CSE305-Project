@@ -24,7 +24,7 @@ Main differences between the two version :
    - No more shared request lists = less synchronization headaches
 
 4. The big performance fix:
-   - v1: ONE global mutex for everything (terrible idea)
+   - v1: one global mutex for everything terrible idea)
    - v2: Each bucket gets its own mutex
    - Also each thread has its own WorkerData struct to collect stuff locally
 
@@ -289,9 +289,7 @@ private:
 };
 
 std::vector<int> parallelDeltaStepping_v2(const Graph& g, int source, int delta, int numThreads) {
-    if (delta <= 0) {
-        delta = findDelta(g);
-    }
+    delta = findDelta(g);
     if (numThreads <= 0) {
         int hw_threads = std::thread::hardware_concurrency();
         numThreads = optimalNumberOfThreads(g, hw_threads);
