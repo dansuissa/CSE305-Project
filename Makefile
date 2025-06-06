@@ -1,17 +1,20 @@
-CXX = g++
-CXXFLAGS = -std=c++17 -Wall -pthread
+CXX        = g++
+CXXFLAGS   = -std=c++17 -Wall -pthread
 
-SRCS = main.cpp graph.cpp delta_stepping.cpp dijkstra.cpp \
-       parallel_delta_stepping.cpp parallel_delta_stepping_v2.cpp
+SRCDIR     = src
+OBJDIR     = obj
+TARGET     = main
+SRCS       = $(wildcard $(SRCDIR)/*.cpp)
+OBJS       = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(SRCS))
 
-OBJS = $(SRCS:.cpp=.o)
+all: $(TARGET)
 
-main: $(OBJS)
-	$(CXX) -o $@ $^ $(CXXFLAGS)
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cpp
-	$(CXX) -c $< $(CXXFLAGS)
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
+	@mkdir -p $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 clean:
-	rm -f *.o main
-
-all: main
+	rm -rf $(OBJDIR) $(TARGET)
