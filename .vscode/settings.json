@@ -1,0 +1,33 @@
+{
+    "files.associations": {
+        "__bit_reference": "cpp",
+        "__config": "cpp",
+        "__split_buffer": "cpp",
+        "array": "cpp",
+        "cctype": "cpp",
+        "clocale": "cpp",
+        "cmath": "cpp",
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "execution": "cpp",
+        "initializer_list": "cpp",
+        "iosfwd": "cpp",
+        "limits": "cpp",
+        "locale": "cpp",
+        "new": "cpp",
+        "stdexcept": "cpp",
+        "string": "cpp",
+        "string_view": "cpp",
+        "tuple": "cpp",
+        "typeinfo": "cpp",
+        "vector": "cpp",
+        "memory": "cpp",
+        "algorithm": "cpp",
+        "iostream": "cpp",
+        "iomanip": "cpp",
+        "shared_mutex": "cpp",
+        "future": "cpp"
+    }
+}
