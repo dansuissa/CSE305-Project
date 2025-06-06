@@ -7,38 +7,13 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include <iostream>
+#include <queue>
+#include <condition_variable>
+#include <functional>
+#include <type_traits>
 
-
-/*
-Main differences between the two version :
-
-1. Got rid of all those global helper functions and stuffed everything into a ParallelSolver class.
-
-2. Bucket handling:
-   - v1: Used deques and had this findNextBucket thing to skip empty ones
-   - v2: Just a vector of vectors, loop through all buckets linearly whihc is simpler
-
-3. Request generation totally changed:
-   - v1: Had a separate findRequests() function that built lists
-   - v2: Each thread builds its own requests while scanning nodes
-   - No more shared request lists = less synchronization headaches
-
-4. The big performance fix:
-   - v1: one global mutex for everything terrible idea)
-   - v2: Each bucket gets its own mutex
-   - Also each thread has its own WorkerData struct to collect stuff locally
-
-5. Relaxation is cleaner:
-   - v1: the logic was to find and remove nodes from deques
-   - v2: Just collect everything, sort it, pick the best distance per node
-   - Don't need to remove nodes from buckets anymore
-
-Basically v2 fixes the fact that global mutex was killing performance. 
-Now threads mostly work independently and only lock when updating specific buckets.
-*/
-
-
-const int INF = std::numeric_limits<int>::max();
+const int INF = std::numeric_limits<int>::max()/2;
 
 int findDelta(const Graph& g) {
     int n = g.size();
@@ -51,7 +26,6 @@ int findDelta(const Graph& g) {
                 max_w = e.weight;
         }
     }
-    
     if (min_w == INF) return 1;
     if (n < 100) return min_w;
     int total_edges = 0;
@@ -61,18 +35,6 @@ int findDelta(const Graph& g) {
     int avg_degree = (total_edges + n - 1) / n;
     int delta = std::max(1, min_w * std::min(10, avg_degree));
     return std::min(delta, max_w / 10);
-}
-
-int optimalNumberOfThreads(const Graph& g, int maxThreads) {
-    int n = g.size();
-    int edge_count = 0;
-    for (int u = 0; u < n; u++) {
-        edge_count += g.getEdges(u).size();
-    }
-    if (n < 1000 || edge_count < 10000)
-        return 1;
-    
-    return maxThreads;
 }
 
 struct WorkerData {
@@ -88,20 +50,22 @@ class ParallelSolver {
     std::vector<std::atomic<int>> distances;
     std::vector<std::mutex> bucket_locks;
     std::vector<std::vector<int>> buckets;
+    std::atomic<int> nextBucket{0};
     
 public:
-    ParallelSolver(const Graph& g, int d, int threads) : graph(g), delta(d), num_workers(threads), distances(g.size()) {
-        // to figure how many buckets we need
+    ParallelSolver(const Graph& g, int d, int threads) : graph(g), delta(d), num_workers(threads), distances(g.size()) {     
         int max_w = 0;
         for (int u = 0; u < graph.size(); u++) {
             for (const Edge& e : graph.getEdges(u)) {
                 if (e.weight > max_w) max_w = e.weight;
             }
         }
+        int estimated_max_distance = max_w * graph.size();
+        int bucket_count = estimated_max_distance / delta + 10;
         
-        int bucket_count = (max_w / delta) + 2;
         buckets.resize(bucket_count);
-        bucket_locks = std::vector<std::mutex>(bucket_count);
+        bucket_locks = std::vector<std::mutex>(bucket_count);  
+        
         for (int i = 0; i < graph.size(); i++) {
             distances[i] = INF;
         }
@@ -112,9 +76,16 @@ public:
         bucket_locks[0].lock();
         buckets[0].push_back(start);
         bucket_locks[0].unlock();
-        for (int bucket_idx = 0; bucket_idx < buckets.size(); bucket_idx++) {
-            process_bucket(bucket_idx);
+        
+        while (true) {
+            int b = nextBucket.load();
+            while (b < (int)buckets.size() && buckets[b].empty()) ++b;
+            if (b >= (int)buckets.size()) break;
+            int prev = nextBucket.exchange(b + 1);
+            if (prev > b) continue;          
+            process_bucket(b);
         }
+        
         std::vector<int> result(graph.size());
         for (int i = 0; i < graph.size(); i++) {
             result[i] = distances[i].load();
@@ -134,9 +105,7 @@ private:
             }
             current_batch = std::move(buckets[b_idx]);
             bucket_locks[b_idx].unlock();
-            finished_nodes.insert(finished_nodes.end(), 
-                                current_batch.begin(), current_batch.end());
-            
+            finished_nodes.insert(finished_nodes.end(), current_batch.begin(), current_batch.end());
             process_light_edges(current_batch, b_idx);
         }
         if (!finished_nodes.empty()) {
@@ -148,7 +117,7 @@ private:
         if (nodes.empty()) return;
         
         std::vector<WorkerData> worker_storage(num_workers);
-        std::vector<std::thread> workers;
+        std::vector<std::thread> threads;
         
         int per_thread = (nodes.size() + num_workers - 1) / num_workers;
         
@@ -158,9 +127,8 @@ private:
             
             if (from >= to) continue;
             
-            workers.push_back(std::thread([&, tid, from, to]() {
+            threads.emplace_back([&, tid, from, to]() {
                 auto& my_data = worker_storage[tid];
-                
                 for (int idx = from; idx < to; idx++) {
                     int node = nodes[idx];
                     int d = distances[node].load();
@@ -173,10 +141,10 @@ private:
                         }
                     }
                 }
-            }));
+            });
         }
-        for (auto& w : workers) {
-            w.join();
+        for (auto& thread : threads) {
+            thread.join();
         }
         
         do_relaxations(worker_storage, true);
@@ -184,8 +152,9 @@ private:
     
     void process_heavy_edges(const std::vector<int>& nodes) {
         if (nodes.empty()) return;
+        
         std::vector<WorkerData> worker_storage(num_workers);
-        std::vector<std::thread> workers;
+        std::vector<std::thread> threads;
         int per_thread = (nodes.size() + num_workers - 1) / num_workers;
         
         for (int t_id = 0; t_id < num_workers; t_id++) {
@@ -194,7 +163,7 @@ private:
             
             if (from >= to) continue;
             
-            workers.push_back(std::thread([&, t_id, from, to]() {
+            threads.emplace_back([&, t_id, from, to]() {
                 auto& my_data = worker_storage[t_id];
                 
                 for (int idx = from; idx < to; idx++) {
@@ -210,11 +179,11 @@ private:
                         }
                     }
                 }
-            }));
+            });
         }
         
-        for (auto& w : workers) {
-            w.join();
+        for (auto& thread : threads) {
+            thread.join();
         }
         
         do_relaxations(worker_storage, false);
@@ -222,21 +191,17 @@ private:
     
     void do_relaxations(std::vector<WorkerData>& data, bool is_light) {
         std::vector<std::pair<int, int>> all_reqs;
-        
         for (auto& wd : data) {
             auto& reqs = is_light ? wd.light_reqs : wd.heavy_reqs;
             all_reqs.insert(all_reqs.end(), reqs.begin(), reqs.end());
             reqs.clear();
         }
-        
-        if (all_reqs.empty()) return;
-        
+    
+        if (all_reqs.empty()) return;    
         std::sort(all_reqs.begin(), all_reqs.end());
-        
         std::vector<std::pair<int, int>> best_reqs;
         int last_node = -1;
         int best_d = INF;
-        
         for (const auto& r : all_reqs) {
             if (r.first != last_node) {
                 if (last_node >= 0 && best_d < INF) {
@@ -248,21 +213,16 @@ private:
                 best_d = std::min(best_d, r.second);
             }
         }
-        
         if (last_node >= 0 && best_d < INF) {
             best_reqs.push_back({last_node, best_d});
         }
-    
-        std::vector<std::thread> workers;
+        std::vector<std::thread> threads;
         int per_thread = (best_reqs.size() + num_workers - 1) / num_workers;
-        
         for (int tid = 0; tid < num_workers; tid++) {
             int from = tid * per_thread;
             int to = std::min(from + per_thread, (int)best_reqs.size());
-            
             if (from >= to) continue;
-            
-            workers.push_back(std::thread([&, from, to]() {
+            threads.emplace_back([&, from, to]() {
                 for (int i = from; i < to; i++) {
                     int node = best_reqs[i].first;
                     int new_d = best_reqs[i].second;
@@ -279,23 +239,21 @@ private:
                         }
                     }
                 }
-            }));
+            });
         }
-        
-        for (auto& w : workers) {
-            w.join();
+        for (auto& thread : threads) {
+            thread.join();
         }
     }
 };
 
 std::vector<int> parallelDeltaStepping_v2(const Graph& g, int source, int delta, int numThreads) {
-    delta = findDelta(g);
-    if (numThreads <= 0) {
-        int hw_threads = std::thread::hardware_concurrency();
-        numThreads = optimalNumberOfThreads(g, hw_threads);
+    if (delta <= 0) {
+        delta = findDelta(g);
     }
-    if (g.size() < 1000) {
-        return deltaStepping(g, source, delta);
+    if (numThreads <= 0) {
+        numThreads = std::thread::hardware_concurrency();
+        if (numThreads == 0) numThreads = 4; 
     }
     ParallelSolver solver(g, delta, numThreads);
     return solver.solve(source);

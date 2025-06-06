@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -pthread
+CXXFLAGS = -std=c++17 -Wall -pthread
 
 SRCS = main.cpp graph.cpp delta_stepping.cpp dijkstra.cpp \
        parallel_delta_stepping.cpp parallel_delta_stepping_v2.cpp

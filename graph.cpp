@@ -69,7 +69,8 @@ void Graph::saveFile(const std::string& filename) const {
 Graph Graph::randomGraph(int vertices, int edges, int maxWeight) {
     Graph g(vertices);
     std::random_device rd;
-    std::mt19937 rng(rd());
+    // std::mt19937 rng(rd());
+    std::mt19937 rng(42); 
     std::uniform_int_distribution<> vertex_dist(0, vertices - 1);
     std::uniform_int_distribution<> weight_dist(1, maxWeight);
     

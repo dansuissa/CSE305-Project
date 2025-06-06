@@ -25,6 +25,9 @@
         "vector": "cpp",
         "memory": "cpp",
         "algorithm": "cpp",
-        "iostream": "cpp"
+        "iostream": "cpp",
+        "iomanip": "cpp",
+        "shared_mutex": "cpp",
+        "future": "cpp"
     }
 }

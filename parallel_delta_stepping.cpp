@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <atomic>
 
-const int INF = std::numeric_limits<int>::max();
+const int INF = std::numeric_limits<int>::max()/2;
 
 using EdgePair = std::pair<int, int>;
 
