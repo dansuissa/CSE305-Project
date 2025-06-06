@@ -1,17 +1,25 @@
-CXX = g++
-CXXFLAGS = -std=c++17 -Wall -pthread
+CXX        = g++
+CXXFLAGS   = -std=c++17 -Wall -pthread
 
-SRCS = main.cpp graph.cpp delta_stepping.cpp dijkstra.cpp \
-       parallel_delta_stepping.cpp parallel_delta_stepping_v2.cpp
+SRCDIR     = src
+OBJDIR     = obj
+TARGET     = main
 
-OBJS = $(SRCS:.cpp=.o)
+# Automatically find all .cpp files in src/
+SRCS       = $(wildcard $(SRCDIR)/*.cpp)
+# Map each src/foo.cpp to obj/foo.o
+OBJS       = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(SRCS))
 
-main: $(OBJS)
-	$(CXX) -o $@ $^ $(CXXFLAGS)
+all: $(TARGET)
 
-%.o: %.cpp
-	$(CXX) -c $< $(CXXFLAGS)
+# Link all object files into the final executable
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Compile rule for each .cpp in src/ to .o in obj/
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
+	@mkdir -p $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 clean:
-	rm -f *.o main
-
-all: main
+	rm -rf $(OBJDIR) $(TARGET)

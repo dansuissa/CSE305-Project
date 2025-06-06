@@ -539,11 +539,11 @@ int main() {
         return 1;
     }
     
-    analyzeGraphTypes();
+    // analyzeGraphTypes();
     // analyzeDensityEffects();
     // analyzeWeightDistributions();
-    analyzeDeltaParameter();
-    // analyzeRealWorldGraphs();
+    // analyzeDeltaParameter();
+    analyzeRealWorldGraphs();
     // analyzeThreadScaling();
     
     std::cout << "Analysis complete! Generated files:\n";
